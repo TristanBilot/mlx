@@ -44,6 +44,13 @@ def to_mlx(x, y, adj, train_mask, val_mask, test_mask):
     test_mask = mx.array(test_mask.tolist())
     return x, y, adj, train_mask, val_mask, test_mask
 
+def get_masks(train_mask, val_mask, test_mask):
+    train_mask = mx.array([i for i, e in enumerate(train_mask) if e == True])
+    val_mask = mx.array([i for i, e in enumerate(val_mask) if e == True])
+    test_mask = mx.array([i for i, e in enumerate(test_mask) if e == True])
+
+    return (train_mask, val_mask, test_mask)
+
 
 def main(args):
 
@@ -52,7 +59,7 @@ def main(args):
     data = dataset[0]
 
     x, y, adj = data.x, data.y, data.edge_index
-    train_mask, val_mask, test_mask = data.train_mask, data.val_mask, data.test_mask
+    train_mask, val_mask, test_mask = get_masks(data.train_mask, data.val_mask, data.test_mask)
     
     x, y, adj, train_mask, val_mask, test_mask = \
         to_mlx(x, y, adj, train_mask, val_mask, test_mask)
