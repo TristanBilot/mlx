@@ -39,7 +39,8 @@ void init_ops(py::module_& m) {
   py::options options;
   options.disable_function_signatures();
 
-  m.def("scatter", static_cast<array (*)(const array&, const std::vector<array>&, const array&, const std::vector<int>&, StreamOrDevice)>(&scatter));
+  m.def("scatter_add_", 
+        static_cast<array (*)(const array&, const std::vector<array>&, const array&, const std::vector<int>&, StreamOrDevice)>(&scatter_add));
 
   m.def(
       "reshape",
