@@ -39,6 +39,8 @@ void init_ops(py::module_& m) {
   py::options options;
   options.disable_function_signatures();
 
+  m.def("scatter", static_cast<array (*)(const array&, const std::vector<array>&, const array&, const std::vector<int>&, StreamOrDevice)>(&scatter));
+
   m.def(
       "reshape",
       &reshape,
@@ -2883,4 +2885,5 @@ void init_ops(py::module_& m) {
         Returns:
             result (array): The output containing elements selected from ``x`` and ``y``.
       )pbdoc");
+
 }
