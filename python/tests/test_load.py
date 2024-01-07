@@ -34,7 +34,6 @@ class TestLoad(mlx_tests.MLXTestCase):
         cls.test_dir_fid.cleanup()
 
     def test_save_and_load(self):
-
         if not os.path.isdir(self.test_dir):
             os.mkdir(self.test_dir)
 
@@ -64,8 +63,34 @@ class TestLoad(mlx_tests.MLXTestCase):
                         load_arr_mlx_npy = np.load(save_file_mlx)
                         self.assertTrue(np.array_equal(load_arr_mlx_npy, save_arr_npy))
 
-    def test_save_and_load_fs(self):
+    def test_save_and_load_safetensors(self):
+        if not os.path.isdir(self.test_dir):
+            os.mkdir(self.test_dir)
 
+        for dt in self.dtypes + ["bfloat16"]:
+            with self.subTest(dtype=dt):
+                for i, shape in enumerate([(1,), (23,), (1024, 1024), (4, 6, 3, 1, 2)]):
+                    with self.subTest(shape=shape):
+                        save_file_mlx = os.path.join(
+                            self.test_dir, f"mlx_{dt}_{i}_fs.safetensors"
+                        )
+                        save_dict = {
+                            "test": mx.random.normal(shape=shape, dtype=getattr(mx, dt))
+                            if dt in ["float32", "float16", "bfloat16"]
+                            else mx.ones(shape, dtype=getattr(mx, dt))
+                        }
+
+                        with open(save_file_mlx, "wb") as f:
+                            mx.save_safetensors(f, save_dict)
+                        with open(save_file_mlx, "rb") as f:
+                            load_dict = mx.load(f)
+
+                        self.assertTrue("test" in load_dict)
+                        self.assertTrue(
+                            mx.array_equal(load_dict["test"], save_dict["test"])
+                        )
+
+    def test_save_and_load_fs(self):
         if not os.path.isdir(self.test_dir):
             os.mkdir(self.test_dir)
 
@@ -138,7 +163,6 @@ class TestLoad(mlx_tests.MLXTestCase):
                     (save_file_npy_uncomp, save_file_mlx_uncomp),
                     (save_file_npy_comp, save_file_mlx_comp),
                 ):
-
                     # Load array saved by mlx as mlx array
                     load_arr_mlx_mlx = mx.load(save_file_mlx)
                     for k, v in load_arr_mlx_mlx.items():
@@ -153,6 +177,29 @@ class TestLoad(mlx_tests.MLXTestCase):
                     load_arr_mlx_npy = np.load(save_file_mlx)
                     for k, v in load_arr_mlx_npy.items():
                         self.assertTrue(np.array_equal(save_arrs_npy[k], v))
+
+    def test_non_contiguous(self):
+        if not os.path.isdir(self.test_dir):
+            os.mkdir(self.test_dir)
+
+        a = mx.broadcast_to(mx.array([1, 2]), [4, 2])
+
+        save_file = os.path.join(self.test_dir, "a.npy")
+        mx.save(save_file, a)
+        aload = mx.load(save_file)
+        self.assertTrue(mx.array_equal(a, aload))
+
+        save_file = os.path.join(self.test_dir, "a.safetensors")
+        mx.save_safetensors(save_file, {"a": a})
+        aload = mx.load(save_file)["a"]
+        self.assertTrue(mx.array_equal(a, aload))
+
+        # safetensors only works with row contiguous
+        # make sure col contiguous is handled properly
+        a = mx.arange(4).reshape(2, 2).T
+        mx.save_safetensors(save_file, {"a": a})
+        aload = mx.load(save_file)["a"]
+        self.assertTrue(mx.array_equal(a, aload))
 
 
 if __name__ == "__main__":

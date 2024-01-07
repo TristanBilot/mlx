@@ -25,7 +25,8 @@ static constexpr int MAX_BUFFERS_PER_QUEUE = 12;
 static constexpr const char* default_mtllib_path = METAL_PATH;
 
 auto load_device() {
-  MTL::Device* device = MTL::CreateSystemDefaultDevice();
+  auto devices = MTL::CopyAllDevices();
+  auto device = static_cast<MTL::Device*>(devices->object(0));
   if (!device) {
     throw std::runtime_error("Failed to load device");
   }
@@ -42,6 +43,25 @@ std::pair<MTL::Library*, NS::Error*> load_library_from_path(
   return std::make_pair(lib, error);
 }
 
+#ifdef SWIFTPM_BUNDLE
+MTL::Library* try_load_bundle(MTL::Device* device, NS::URL* url) {
+  std::string bundle_path = std::string(url->fileSystemRepresentation()) + "/" +
+      SWIFTPM_BUNDLE + ".bundle";
+  auto bundle = NS::Bundle::alloc()->init(
+      NS::String::string(bundle_path.c_str(), NS::UTF8StringEncoding));
+  if (bundle != nullptr) {
+    std::string resource_path =
+        std::string(bundle->resourceURL()->fileSystemRepresentation()) + "/" +
+        "default.metallib";
+    auto [lib, error] = load_library_from_path(device, resource_path.c_str());
+    if (lib) {
+      return lib;
+    }
+  }
+  return nullptr;
+}
+#endif
+
 MTL::Library* load_library(
     MTL::Device* device,
     const std::string& lib_name = "mlx",
@@ -54,6 +74,26 @@ MTL::Library* load_library(
       return lib;
     }
   }
+
+#ifdef SWIFTPM_BUNDLE
+  // try to load from a swiftpm resource bundle -- scan the available bundles to
+  // find one that contains the named bundle
+  {
+    MTL::Library* library =
+        try_load_bundle(device, NS::Bundle::mainBundle()->bundleURL());
+    if (library != nullptr) {
+      return library;
+    }
+    auto bundles = NS::Bundle::allBundles();
+    for (int i = 0, c = (int)bundles->count(); i < c; i++) {
+      auto bundle = reinterpret_cast<NS::Bundle*>(bundles->object(i));
+      library = try_load_bundle(device, bundle->resourceURL());
+      if (library != nullptr) {
+        return library;
+      }
+    }
+  }
+#endif
 
   // Couldn't find it so let's load it from default_mtllib_path
   {
@@ -71,14 +111,22 @@ MTL::Library* load_library(
 
 } // namespace
 
-Device::Device()
-    : pool_(NS::AutoreleasePool::alloc()->init()),
-      device_(load_device()),
-      library_map_({{"mlx", load_library(device_)}}) {}
+Device::Device() {
+  auto pool = new_scoped_memory_pool();
+  device_ = load_device();
+  library_map_ = {{"mlx", load_library(device_)}};
+}
 
 Device::~Device() {
+  auto pool = new_scoped_memory_pool();
   for (auto& q : queue_map_) {
     q.second->release();
+  }
+  for (auto& b : buffer_map_) {
+    b.second.second->release();
+  }
+  for (auto& e : encoder_map_) {
+    e.second->release();
   }
   for (auto& k : kernel_map_) {
     k.second->release();
@@ -87,10 +135,11 @@ Device::~Device() {
     l.second->release();
   }
   device_->release();
-  pool_->release();
 }
 
 void Device::new_queue(int index) {
+  auto thread_pool = metal::new_scoped_memory_pool();
+
   // Multiple threads can ask the device for queues
   // We lock this as a critical section for safety
   const std::lock_guard<std::mutex> lock(mtx_);
@@ -196,6 +245,7 @@ void Device::register_library(
 MTL::ComputePipelineState* Device::get_kernel(
     const std::string& name,
     const std::string& lib_name /* = "mlx" */) {
+  auto pool = new_scoped_memory_pool();
   // Look for cached kernel
   if (auto it = kernel_map_.find(name); it != kernel_map_.end()) {
     return it->second;
@@ -238,18 +288,18 @@ MTL::ComputePipelineState* Device::get_kernel(
 }
 
 Device& device(mlx::core::Device) {
-  static Device metal_device_;
-  return metal_device_;
+  static Device metal_device;
+  return metal_device;
 }
 
-NS::AutoreleasePool*& thread_autorelease_pool() {
-  static thread_local NS::AutoreleasePool* p =
-      NS::AutoreleasePool::alloc()->init();
-  return p;
+std::shared_ptr<void> new_scoped_memory_pool() {
+  auto dtor = [](void* ptr) {
+    static_cast<NS::AutoreleasePool*>(ptr)->release();
+  };
+  return std::shared_ptr<void>(NS::AutoreleasePool::alloc()->init(), dtor);
 }
 
 void new_stream(Stream stream) {
-  thread_autorelease_pool();
   if (stream.device == mlx::core::Device::gpu) {
     device(stream.device).new_queue(stream.index);
   }

@@ -4,6 +4,7 @@ import argparse
 import math
 import os
 import time
+from functools import partial
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -21,6 +22,16 @@ def none_or_list(x):
         return None
     else:
         return [int(xi) for xi in x.split(",")]
+
+
+def dtype_from_str(x):
+    if x == "":
+        return mx.float32
+    else:
+        dt = getattr(mx, x)
+        if not isinstance(dt, mx.Dtype):
+            raise ValueError(f"{x} is not an mlx dtype")
+        return dt
 
 
 def bench(f, *args):
@@ -47,6 +58,23 @@ def matmul(x, y):
     for i in range(10):
         ys.append(x @ y)
     mx.eval(ys)
+
+
+def _quant_matmul(x, w, s, b, group_size, bits):
+    ys = []
+    for i in range(10):
+        ys.append(mx.quantized_matmul(x, w, s, b, group_size=group_size, bits=bits))
+    mx.eval(ys)
+
+
+quant_matmul = {
+    "quant_matmul_64_2": partial(_quant_matmul, group_size=64, bits=2),
+    "quant_matmul_64_4": partial(_quant_matmul, group_size=64, bits=4),
+    "quant_matmul_64_8": partial(_quant_matmul, group_size=64, bits=8),
+    "quant_matmul_128_2": partial(_quant_matmul, group_size=128, bits=2),
+    "quant_matmul_128_4": partial(_quant_matmul, group_size=128, bits=4),
+    "quant_matmul_128_8": partial(_quant_matmul, group_size=128, bits=8),
+}
 
 
 def conv1d(x, y):
@@ -296,9 +324,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fused", action="store_true", help="Use fused functions where possible"
     )
-    parser.add_argument(
-        "--dtype", choices=["float32", "float16", "bfloat16"], default="float32"
-    )
+    parser.add_argument("--dtype", type=dtype_from_str, default=[], action="append")
 
     args = parser.parse_args()
 
@@ -315,11 +341,15 @@ if __name__ == "__main__":
         mx.set_default_device(mx.cpu)
     else:
         mx.set_default_device(mx.gpu)
-    dtype = dict(float32=mx.float32, float16=mx.float16, bfloat16=mx.bfloat16)[
-        args.dtype
-    ]
+
+    types = args.dtype
+    if not types:
+        types = [mx.float32]
+    if len(types) < len(args.size):
+        types = types + [types[0]] * (len(args.size) - len(types))
+
     xs = []
-    for size in args.size:
+    for size, dtype in zip(args.size, types):
         xs.append(mx.random.normal(size).astype(dtype))
     for i, t in enumerate(args.transpose):
         if t is None:
@@ -334,6 +364,9 @@ if __name__ == "__main__":
 
     elif args.benchmark == "matmul":
         print(bench(matmul, *xs))
+
+    elif args.benchmark.startswith("quant_matmul"):
+        print(bench(quant_matmul[args.benchmark], *xs))
 
     elif args.benchmark == "linear":
         print(bench(linear, *xs))

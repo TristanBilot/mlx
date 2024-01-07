@@ -73,6 +73,12 @@ TEST_CASE("test flatten") {
   // Check start > end throws
   CHECK_THROWS(flatten(x, 2, 1));
 
+  // Check start >= ndim throws
+  CHECK_THROWS(flatten(x, 5, 6));
+
+  // Check end < 0 throws
+  CHECK_THROWS(flatten(x, -5, -4));
+
   // Check scalar flattens to 1D
   x = array(1);
   CHECK_EQ(flatten(x, -3, -1).shape(), std::vector<int>({1}));
@@ -856,6 +862,15 @@ TEST_CASE("test arithmetic unary ops") {
     CHECK_THROWS_AS(ceil(x), std::invalid_argument);
   }
 
+  // Test round
+  {
+    array x({0.5, -0.5, 1.5, -1.5, 2.3, 2.6});
+    CHECK(array_equal(round(x), array({1, -1, 2, -2, 2, 3})).item<bool>());
+
+    x = array({11, 222, 32});
+    CHECK(array_equal(round(x, -1), array({10, 220, 30})).item<bool>());
+  }
+
   // Test exponential
   {
     array x(0.0);
@@ -1396,7 +1411,7 @@ TEST_CASE("test broadcast") {
   x.eval();
   CHECK_EQ(x.strides(), std::vector<size_t>{0, 0, 1});
 
-  // Broadcast on transposed arrray works
+  // Broadcast on transposed array works
   x = array({0, 1, 2, 3, 4, 5}, {2, 3});
   x = broadcast_to(transpose(x), {2, 3, 2});
   CHECK_EQ(x.shape(), std::vector<int>{2, 3, 2});
@@ -1718,7 +1733,7 @@ TEST_CASE("test scatter") {
   out = scatter(in, inds, updates, 0);
   CHECK(array_equal(out, reshape(arange(16, float32), {4, 4})).item<bool>());
 
-  // Irregular strided index and reduce collison test
+  // Irregular strided index and reduce collision test
   in = zeros({10}, float32);
   inds = broadcast_to(array(3), {10});
   updates = ones({10, 1}, float32);
@@ -1735,7 +1750,7 @@ TEST_CASE("test scatter") {
   out = scatter_max(array(1), {}, array(2), std::vector<int>{});
   CHECK_EQ(out.item<int>(), 2);
 
-  // Irregularaly strided updates test
+  // Irregularly strided updates test
   in = ones({3, 3});
   updates = broadcast_to(array({0, 0, 0}), {1, 3, 3});
   inds = array({0});
@@ -2164,4 +2179,139 @@ TEST_CASE("test eye with negative k offset") {
       {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f},
       {4, 3});
   CHECK(array_equal(eye_4_k_minus1, expected_eye_4_k_minus1).item<bool>());
+}
+
+TEST_CASE("test basic clipping") {
+  array a({1.0f, 4.0f, 3.0f, 8.0f, 5.0f}, {5});
+  array expected({2.0f, 4.0f, 3.0f, 6.0f, 5.0f}, {5});
+  auto clipped = clip(a, array(2.0f), array(6.0f));
+  CHECK(array_equal(clipped, expected).item<bool>());
+}
+
+TEST_CASE("test clipping with only min") {
+  array a({-1.0f, 1.0f, 0.0f, 5.0f}, {4});
+  array expected({0.0f, 1.0f, 0.0f, 5.0f}, {4});
+  auto clipped = clip(a, array(0.0f), std::nullopt);
+  CHECK(array_equal(clipped, expected).item<bool>());
+}
+
+TEST_CASE("test clipping with only max") {
+  array a({2.0f, 3.0f, 4.0f, 5.0f}, {4});
+  array expected({2.0f, 3.0f, 4.0f, 4.0f}, {4});
+  auto clipped = clip(a, std::nullopt, array(4.0f));
+  CHECK(array_equal(clipped, expected).item<bool>());
+}
+
+TEST_CASE("test linspace") {
+  auto x = linspace(0, 10, 5);
+  auto expected = array({0.0f, 2.5f, 5.0f, 7.5f, 10.0f}, {5});
+  CHECK(array_equal(x, expected).item<bool>());
+
+  x = linspace(0, 10, 5, int32);
+  expected = array({0, 2, 5, 7, 10}, {5});
+  CHECK(array_equal(x, expected).item<bool>());
+
+  x = linspace(0, 1, 0);
+  expected = array(std::initializer_list<float>{}, {0});
+  CHECK(array_equal(x, expected).item<bool>());
+}
+
+TEST_CASE("test quantize dequantize") {
+  auto x1 = ones({128, 1});
+  auto x2 = expand_dims(arange(0, 128, float32), 0);
+  auto x = x1 * x2;
+
+  for (int i = 2; i <= 8; i *= 2) {
+    int el_per_int = 32 / i;
+    auto [x_q, scales, biases] = quantize(x, 128, i);
+    CHECK_EQ(x_q.shape(), std::vector<int>{128, 128 / el_per_int});
+    CHECK_EQ(scales.shape(), std::vector<int>{128, 1});
+    CHECK_EQ(biases.shape(), std::vector<int>{128, 1});
+
+    auto x_hat = dequantize(x_q, scales, biases, 128, i);
+    auto max_diff = max(abs(x - x_hat)).item<float>();
+    CHECK(max_diff <= 127.0 / (1 << i));
+  }
+}
+
+TEST_CASE("test repeat") {
+  auto data = array({13, 3, 16, 6, 14, 4, 15, 5, 11, 1, 12, 2}, {3, 2, 2});
+  auto repeat_axis_0 = repeat(data, 2, 0);
+  auto expected_axis_0 = array(
+      {13, 3, 16, 6, 13, 3, 16, 6, 14, 4, 15, 5,
+       14, 4, 15, 5, 11, 1, 12, 2, 11, 1, 12, 2},
+      {6, 2, 2});
+
+  auto repeat_axis_1 = repeat(data, 2, 1);
+  auto expected_axis_1 = array(
+      {13, 3, 13, 3, 16, 6, 16, 6, 14, 4, 14, 4,
+       15, 5, 15, 5, 11, 1, 11, 1, 12, 2, 12, 2},
+      {3, 4, 2});
+
+  auto repeat_axis_2 = repeat(data, 2); // default axis == ndim - 1 == 2
+  auto expected_axis_2 = array(
+      {13, 13, 3, 3, 16, 16, 6, 6, 14, 14, 4, 4,
+       15, 15, 5, 5, 11, 11, 1, 1, 12, 12, 2, 2},
+      {24});
+
+  // check output
+  CHECK(array_equal(repeat_axis_0, expected_axis_0).item<bool>());
+  CHECK(array_equal(repeat_axis_1, expected_axis_1).item<bool>());
+  CHECK(array_equal(repeat_axis_2, expected_axis_2).item<bool>());
+
+  auto data_2 = array({1, 3, 2}, {3});
+  auto repeat_2 = repeat(data_2, 2, 0);
+  auto expected_2 = array({1, 1, 3, 3, 2, 2}, {6});
+  CHECK(array_equal(repeat_2, expected_2).item<bool>());
+
+  auto data_3 = array({1, 2, 3, 4, 5, 4, 0, 1, 2}, {3, 3});
+  auto repeat_3 = repeat(data_3, 2, 0);
+  auto expected_3 =
+      array({1, 2, 3, 1, 2, 3, 4, 5, 4, 4, 5, 4, 0, 1, 2, 0, 1, 2}, {6, 3});
+  CHECK(array_equal(repeat_3, expected_3).item<bool>());
+
+  // 0 repeats
+  auto repeat_4 = repeat(data_3, 0, 0);
+  auto expected_4 = array({});
+  CHECK(array_equal(repeat_2, expected_2).item<bool>());
+
+  // negative repeats
+  CHECK_THROWS_AS(repeat(data_3, -3, 0), std::invalid_argument);
+}
+
+TEST_CASE("tensordot") {
+  auto x = reshape(arange(60.), {3, 4, 5});
+  auto y = reshape(arange(24.), {4, 3, 2});
+  auto z = tensordot(x, y, {{1, 0}, {0, 1}});
+  auto expected = array(
+      {4400, 4730, 4532, 4874, 4664, 5018, 4796, 5162, 4928, 5306}, {5, 2});
+  CHECK(array_equal(z, expected).item<bool>());
+  x = reshape(arange(360.), {3, 4, 5, 6});
+  y = reshape(arange(360.), {6, 4, 5, 3});
+  CHECK_THROWS_AS(
+      tensordot(x, y, {{2, 1, 3}, {1, 2, 0}}), std::invalid_argument);
+  x = reshape(arange(60.), {3, 4, 5});
+  y = reshape(arange(120.), {4, 5, 6});
+  z = tensordot(x, y, 2);
+  expected = array(
+      {14820.,
+       15010.,
+       15200.,
+       15390.,
+       15580.,
+       15770.,
+       37620.,
+       38210.,
+       38800.,
+       39390.,
+       39980.,
+       40570.,
+       60420.,
+       61410.,
+       62400.,
+       63390.,
+       64380.,
+       65370.},
+      {3, 6});
+  CHECK(array_equal(z, expected).item<bool>());
 }

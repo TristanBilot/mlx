@@ -88,7 +88,7 @@ class TestOps(mlx_tests.MLXTestCase):
         self.assertEqual(a.dtype, mx.float32)
         self.assertEqual(a.item(), 3.0)
 
-        # Check comibinations with mlx arrays
+        # Check combinations with mlx arrays
         a = mx.add(mx.array(True), False)
         self.assertEqual(a.dtype, mx.bool_)
         self.assertEqual(a.item(), True)
@@ -115,6 +115,7 @@ class TestOps(mlx_tests.MLXTestCase):
             "subtract",
             "multiply",
             "divide",
+            "floor_divide",
             "remainder",
             "equal",
             "not_equal",
@@ -323,24 +324,20 @@ class TestOps(mlx_tests.MLXTestCase):
     def test_tri(self):
         for shape in [[4], [4, 4], [2, 10]]:
             for diag in [-1, 0, 1, -2]:
-                self.assertEqualArray(
-                    mx.tri(*shape, k=diag), mx.array(np.tri(*shape, k=diag))
-                )
+                self.assertCmpNumpy(shape, mx.tri, np.tri, k=diag)
+        self.assertEqual(mx.tri(1, 1).dtype, mx.float32)
+        self.assertEqual(mx.tri(1, 1, dtype=mx.bfloat16).dtype, mx.bfloat16)
 
     def test_tril(self):
-        mt = mx.random.normal((10, 10))
-        nt = np.array(mt)
         for diag in [-1, 0, 1, -2]:
-            self.assertEqualArray(mx.tril(mt, diag), mx.array(np.tril(nt, diag)))
+            self.assertCmpNumpy([(10, 10)], mx.tril, np.tril, k=diag)
 
         with self.assertRaises(Exception):
             mx.tril(mx.zeros((1)))
 
     def test_triu(self):
-        mt = mx.random.normal((10, 10))
-        nt = np.array(mt)
         for diag in [-1, 0, 1, -2]:
-            self.assertEqualArray(mx.triu(mt, diag), mx.array(np.triu(nt, diag)))
+            self.assertCmpNumpy([(10, 10)], mx.triu, np.triu, k=diag)
         with self.assertRaises(Exception):
             mx.triu(mx.zeros((1)))
 
@@ -372,7 +369,35 @@ class TestOps(mlx_tests.MLXTestCase):
         self.assertListEqual(mx.ceil(x).tolist(), expected)
 
         with self.assertRaises(ValueError):
-            mx.floor(mx.array([22 + 3j, 19 + 98j]))
+            mx.ceil(mx.array([22 + 3j, 19 + 98j]))
+
+    def test_round(self):
+        # float
+        x = mx.array(
+            [0.5, -0.5, 1.5, -1.5, -22.03, 19.98, -27, 9, 0.0, -np.inf, np.inf]
+        )
+        expected = [1, -1, 2, -2, -22, 20, -27, 9, 0, -np.inf, np.inf]
+        self.assertListEqual(mx.round(x).tolist(), expected)
+
+        # complex
+        y = mx.round(mx.array([22.2 + 3.6j, 19.5 + 98.2j]))
+        self.assertListEqual(y.tolist(), [22 + 4j, 20 + 98j])
+
+        # decimals
+        y0 = mx.round(mx.array([15, 122], mx.int32), decimals=0)
+        y1 = mx.round(mx.array([15, 122], mx.int32), decimals=-1)
+        y2 = mx.round(mx.array([15, 122], mx.int32), decimals=-2)
+        self.assertEqual(y0.dtype, mx.int32)
+        self.assertEqual(y1.dtype, mx.int32)
+        self.assertEqual(y2.dtype, mx.int32)
+        self.assertListEqual(y0.tolist(), [15, 122])
+        self.assertListEqual(y1.tolist(), [20, 120])
+        self.assertListEqual(y2.tolist(), [0, 100])
+
+        y1 = mx.round(mx.array([1.537, 1.471], mx.float32), decimals=1)
+        y2 = mx.round(mx.array([1.537, 1.471], mx.float32), decimals=2)
+        self.assertTrue(mx.allclose(y1, mx.array([1.5, 1.5])))
+        self.assertTrue(mx.allclose(y2, mx.array([1.54, 1.47])))
 
     def test_transpose_noargs(self):
         x = mx.array([[0, 1, 1], [1, 0, 0]])
@@ -1068,6 +1093,7 @@ class TestOps(mlx_tests.MLXTestCase):
             "subtract",
             "multiply",
             "divide",
+            "floor_divide",
             "maximum",
             "minimum",
             "power",
@@ -1083,19 +1109,21 @@ class TestOps(mlx_tests.MLXTestCase):
                     "uint32",
                     "uint64",
                 ]
-
                 float_dtypes = ["float16", "float32"]
 
-                dtypes = (
-                    float_dtypes
-                    if op in ("divide", "power")
-                    else (int_dtypes + float_dtypes)
-                )
+                dtypes = {
+                    "divide": float_dtypes,
+                    "power": float_dtypes,
+                    "floor_divide": ["float32"] + int_dtypes,
+                }
+                dtypes = dtypes.get(op, int_dtypes + float_dtypes)
+
                 for dtype in dtypes:
                     atol = 1e-3 if dtype == "float16" else 1e-6
                     with self.subTest(dtype=dtype):
-                        x1_ = x1.astype(getattr(np, dtype))
-                        x2_ = x2.astype(getattr(np, dtype))
+                        m = 10 if dtype in int_dtypes else 1
+                        x1_ = (x1 * m).astype(getattr(np, dtype))
+                        x2_ = (x2 * m).astype(getattr(np, dtype))
                         y1_ = mx.array(x1_)
                         y2_ = mx.array(x2_)
                         test_ops(
@@ -1228,20 +1256,17 @@ class TestOps(mlx_tests.MLXTestCase):
         self.assertTrue(mx.allclose(a_bwd[4:-2, 2:-4], df[0]).item())
 
     def test_where(self):
-        a = mx.array([[1, 2], [3, 4]])
-        out = mx.where(True, a, 1)
-        out_np = np.where(True, a, 1)
-        self.assertTrue(np.array_equal(out, out_np))
-
-        out = mx.where(True, 1, a)
-        out_np = np.where(True, 1, a)
-        self.assertTrue(np.array_equal(out, out_np))
-
-        condition = mx.array([[True, False], [False, True]])
-        b = mx.array([5, 6])
-        out = mx.where(condition, a, b)
-        out_np = np.where(condition, a, b)
-        self.assertTrue(np.array_equal(out, out_np))
+        self.assertCmpNumpy([True, mx.array([[1, 2], [3, 4]]), 1], mx.where, np.where)
+        self.assertCmpNumpy([True, 1, mx.array([[1, 2], [3, 4]])], mx.where, np.where)
+        self.assertCmpNumpy(
+            [
+                mx.array([[True, False], [False, True]]),
+                mx.array([[1, 2], [3, 4]]),
+                mx.array([5, 6]),
+            ],
+            mx.where,
+            np.where,
+        )
 
     def test_as_strided(self):
         x_npy = np.random.randn(128).astype(np.float32)
@@ -1376,24 +1401,13 @@ class TestOps(mlx_tests.MLXTestCase):
         self.assertEqual((a + b)[0, 0].item(), 2)
 
     def test_eye(self):
-        eye_matrix = mx.eye(3)
-        np_eye_matrix = np.eye(3)
-        self.assertTrue(np.array_equal(eye_matrix, np_eye_matrix))
-
+        self.assertCmpNumpy([3], mx.eye, np.eye)
         # Test for non-square matrix
-        eye_matrix = mx.eye(3, 4)
-        np_eye_matrix = np.eye(3, 4)
-        self.assertTrue(np.array_equal(eye_matrix, np_eye_matrix))
-
+        self.assertCmpNumpy([3, 4], mx.eye, np.eye)
         # Test with positive k parameter
-        eye_matrix = mx.eye(3, 4, k=1)
-        np_eye_matrix = np.eye(3, 4, k=1)
-        self.assertTrue(np.array_equal(eye_matrix, np_eye_matrix))
-
+        self.assertCmpNumpy([3, 4], mx.eye, np.eye, k=1)
         # Test with negative k parameter
-        eye_matrix = mx.eye(5, 6, k=-2)
-        np_eye_matrix = np.eye(5, 6, k=-2)
-        self.assertTrue(np.array_equal(eye_matrix, np_eye_matrix))
+        self.assertCmpNumpy([5, 6], mx.eye, np.eye, k=-2)
 
     def test_stack(self):
         a = mx.ones((2,))
@@ -1434,6 +1448,104 @@ class TestOps(mlx_tests.MLXTestCase):
         self.assertEqual(x.flatten().shape, [2 * 3 * 4])
         self.assertEqual(x.flatten(start_axis=1).shape, [2, 3 * 4])
         self.assertEqual(x.flatten(end_axis=1).shape, [2 * 3, 4])
+
+    def test_clip(self):
+        a = np.array([1, 4, 3, 8, 5], np.int32)
+        expected = np.clip(a, 2, 6)
+        clipped = mx.clip(mx.array(a), 2, 6)
+        self.assertTrue(np.array_equal(clipped, expected))
+
+        a = np.array([-1, 1, 0, 5], np.int32)
+        expected = np.clip(a, 0, None)
+        clipped = mx.clip(mx.array(a), 0, None)
+        self.assertTrue(np.array_equal(clipped, expected))
+
+        a = np.array([2, 3, 4, 5], np.int32)
+        expected = np.clip(a, None, 4)
+        clipped = mx.clip(mx.array(a), None, 4)
+        self.assertTrue(np.array_equal(clipped, expected))
+
+        mins = np.array([3, 1, 5, 5])
+        a = np.array([2, 3, 4, 5], np.int32)
+        expected = np.clip(a, mins, 4)
+        clipped = mx.clip(mx.array(a), mx.array(mins), 4)
+        self.assertTrue(np.array_equal(clipped, expected))
+
+        maxs = np.array([5, -1, 2, 9])
+        a = np.array([2, 3, 4, 5], np.int32)
+        expected = np.clip(a, mins, maxs)
+        clipped = mx.clip(mx.array(a), mx.array(mins), mx.array(maxs))
+        self.assertTrue(np.array_equal(clipped, expected))
+
+    def test_linspace(self):
+        # Test default num = 50
+        a = mx.linspace(0, 1)
+        expected = mx.array(np.linspace(0, 1))
+        self.assertEqualArray(a, expected)
+
+        # Test int32 dtype
+        b = mx.linspace(0, 10, 5, mx.int64)
+        expected = mx.array(np.linspace(0, 10, 5, dtype=int))
+        self.assertEqualArray(b, expected)
+
+        # Test negative sequence with float start and stop
+        c = mx.linspace(-2.7, -0.7, 7)
+        expected = mx.array(np.linspace(-2.7, -0.7, 7))
+        self.assertEqualArray(c, expected)
+
+        # Test irrational step size of 1/9
+        d = mx.linspace(0, 1, 10)
+        expected = mx.array(np.linspace(0, 1, 10))
+        self.assertEqualArray(d, expected)
+
+    def test_repeat(self):
+        # Setup data for the tests
+        data = mx.array([[[13, 3], [16, 6]], [[14, 4], [15, 5]], [[11, 1], [12, 2]]])
+        # Test repeat along axis 0
+        self.assertCmpNumpy([data, 2], mx.repeat, np.repeat, axis=0)
+        # Test repeat along axis 1
+        self.assertCmpNumpy([data, 2], mx.repeat, np.repeat, axis=1)
+        # Test repeat along the last axis (default)
+        self.assertCmpNumpy([data, 2], mx.repeat, np.repeat)
+        # Test repeat with a 1D array along axis 0
+        self.assertCmpNumpy([mx.array([1, 3, 2]), 3], mx.repeat, np.repeat, axis=0)
+        # Test repeat with a 2D array along axis 0
+        self.assertCmpNumpy(
+            [mx.array([[1, 2, 3], [4, 5, 4], [0, 1, 2]]), 2],
+            mx.repeat,
+            np.repeat,
+            axis=0,
+        )
+
+    def test_tensordot(self):
+        # No fp16 matmuls on linux
+        if self.is_linux:
+            dtypes = [mx.float32]
+        else:
+            dtypes = [mx.float16, mx.float32]
+        for dtype in dtypes:
+            with self.subTest(dtype=dtype):
+                self.assertCmpNumpy(
+                    [(3, 4, 5), (4, 3, 2)],
+                    mx.tensordot,
+                    lambda x, y, dims: np.tensordot(x, y, axes=dims),
+                    dtype=dtype,
+                    dims=([1, 0], [0, 1]),
+                )
+                self.assertCmpNumpy(
+                    [(3, 4, 5), (4, 5, 6)],
+                    mx.tensordot,
+                    lambda x, y, dims: np.tensordot(x, y, axes=dims),
+                    dtype=dtype,
+                    dims=2,
+                )
+                self.assertCmpNumpy(
+                    [(3, 5, 4, 6), (6, 4, 5, 3)],
+                    mx.tensordot,
+                    lambda x, y, dims: np.tensordot(x, y, axes=dims),
+                    dtype=dtype,
+                    dims=([2, 1, 3], [1, 2, 0]),
+                )
 
 
 if __name__ == "__main__":

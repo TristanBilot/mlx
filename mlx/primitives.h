@@ -4,7 +4,7 @@
 
 #include "array.h"
 #include "device.h"
-#include "load.h"
+#include "io/load.h"
 #include "stream.h"
 
 #define DEFINE_GRADS()                           \
@@ -49,7 +49,7 @@ class Primitive {
    * A primitive must know how to evaluate itself on
    * the CPU/GPU for the given inputs and populate the output array.
    *
-   * To avoid unecessary allocations, the evaluation function
+   * To avoid unnecessary allocations, the evaluation function
    * is responsible for allocating space for the array.
    */
   virtual void eval_cpu(const std::vector<array>& inputs, array& out) = 0;
@@ -84,7 +84,7 @@ class Primitive {
   /** Print the primitive. */
   virtual void print(std::ostream& os) = 0;
 
-  /** Equivalence check defaults to false unless overriden by the primitive */
+  /** Equivalence check defaults to false unless overridden by the primitive */
   virtual bool is_equivalent(const Primitive& other) const {
     return false;
   }
@@ -1110,6 +1110,37 @@ class Power : public Primitive {
   void eval(const std::vector<array>& inputs, array& out);
 };
 
+class QuantizedMatmul : public Primitive {
+ public:
+  explicit QuantizedMatmul(
+      Stream stream,
+      int group_size,
+      int bits,
+      bool transpose)
+      : Primitive(stream),
+        group_size_(group_size),
+        bits_(bits),
+        transpose_(transpose){};
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  std::pair<array, int> vmap(
+      const std::vector<array>& inputs,
+      const std::vector<int>& axes) override;
+
+  DEFINE_GRADS()
+  DEFINE_PRINT(QuantizedMatmul)
+  bool is_equivalent(const Primitive& other) const override;
+
+ private:
+  int group_size_;
+  int bits_;
+  bool transpose_;
+
+  void eval(const std::vector<array>& inputs, array& out);
+};
+
 class RandomBits : public Primitive {
  public:
   explicit RandomBits(Stream stream, const std::vector<int>& shape, int width)
@@ -1206,6 +1237,25 @@ class Reduce : public Primitive {
   void eval(const std::vector<array>& inputs, array& out);
 };
 
+class Round : public Primitive {
+ public:
+  explicit Round(Stream stream) : Primitive(stream){};
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  std::pair<array, int> vmap(
+      const std::vector<array>& inputs,
+      const std::vector<int>& axes) override;
+
+  DEFINE_GRADS()
+  DEFINE_PRINT(Round)
+  DEFINE_DEFAULT_IS_EQUIVALENT()
+
+ private:
+  void eval(const std::vector<array>& inputs, array& out);
+};
+
 class Scan : public Primitive {
  public:
   enum ReduceType { Max, Min, Sum, Prod };
@@ -1272,7 +1322,26 @@ class Scatter : public Primitive {
   void eval_cpu(const std::vector<array>& inputs, array& out) override;
   void eval_gpu(const std::vector<array>& inputs, array& out) override;
 
-  DEFINE_PRINT(Scatter)
+  DEFINE_GRADS();
+  void print(std::ostream& os) override {
+    os << "Scatter";
+    switch (reduce_type_) {
+      case Sum:
+        os << " Sum";
+        break;
+      case Prod:
+        os << " Prod";
+        break;
+      case Min:
+        os << " Min";
+        break;
+      case Max:
+        os << " Max";
+        break;
+      case None:
+        break;
+    }
+  }
   bool is_equivalent(const Primitive& other) const override;
 
  private:

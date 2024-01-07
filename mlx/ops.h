@@ -2,11 +2,12 @@
 
 #pragma once
 
+#include <optional>
 #include <variant>
 
 #include "array.h"
 #include "device.h"
-#include "load.h"
+#include "io/load.h"
 #include "stream.h"
 
 namespace mlx::core {
@@ -19,7 +20,7 @@ Stream to_stream(StreamOrDevice s);
 
 /**
  * A 1D array of numbers starting at `start` (optional),
- * stopping at stop, stepping by `step` (optional). **/
+ * stopping at stop, stepping by `step` (optional). */
 array arange(
     double start,
     double stop,
@@ -35,6 +36,14 @@ array arange(double stop, StreamOrDevice s = {});
 array arange(int start, int stop, int step, StreamOrDevice s = {});
 array arange(int start, int stop, StreamOrDevice s = {});
 array arange(int stop, StreamOrDevice s = {});
+
+/** A 1D array of `num` evenly spaced numbers in the range `[start, stop]` */
+array linspace(
+    double start,
+    double stop,
+    int num = 50,
+    Dtype dtype = float32,
+    StreamOrDevice s = {});
 
 /** Convert an array to the given data type. */
 array astype(const array& a, Dtype dtype, StreamOrDevice s = {});
@@ -185,6 +194,15 @@ std::vector<array> split(
 std::vector<array>
 split(const array& a, const std::vector<int>& indices, StreamOrDevice s = {});
 
+/**
+ * Clip (limit) the values in an array.
+ */
+array clip(
+    const array& a,
+    const std::optional<array>& a_min = std::nullopt,
+    const std::optional<array>& a_max = std::nullopt,
+    StreamOrDevice s = {});
+
 /** Concatenate arrays along a given axis. */
 array concatenate(
     const std::vector<array>& arrays,
@@ -195,6 +213,10 @@ array concatenate(const std::vector<array>& arrays, StreamOrDevice s = {});
 /** Stack arrays along a new axis. */
 array stack(const std::vector<array>& arrays, int axis, StreamOrDevice s = {});
 array stack(const std::vector<array>& arrays, StreamOrDevice s = {});
+
+/** Repeat an array along an axis. */
+array repeat(const array& arr, int repeats, int axis, StreamOrDevice s = {});
+array repeat(const array& arr, int repeats, StreamOrDevice s = {});
 
 /** Permutes the dimensions according to the given axes. */
 array transpose(const array& a, std::vector<int> axes, StreamOrDevice s = {});
@@ -691,6 +713,9 @@ array operator/(const array& a, const array& b);
 array operator/(double a, const array& b);
 array operator/(const array& a, double b);
 
+/** Compute integer division. Equivalent to doing floor(a / x). */
+array floor_divide(const array& a, const array& b, StreamOrDevice s = {});
+
 /** Compute the element-wise remainder of division */
 array remainder(const array& a, const array& b, StreamOrDevice s = {});
 array operator%(const array& a, const array& b);
@@ -783,6 +808,12 @@ array erfinv(const array& a, StreamOrDevice s = {});
 
 /** Stop the flow of gradients. */
 array stop_gradient(const array& a, StreamOrDevice s = {});
+
+/** Round a floating point number */
+array round(const array& a, int decimals, StreamOrDevice s = {});
+inline array round(const array& a, StreamOrDevice s = {}) {
+  return round(a, 0, s);
+}
 
 /** Matrix-matrix multiplication. */
 array matmul(const array& a, const array& b, StreamOrDevice s = {});
@@ -1004,4 +1035,60 @@ array load(std::shared_ptr<io::Reader> in_stream, StreamOrDevice s = {});
 /** Load array from file in .npy format */
 array load(const std::string& file, StreamOrDevice s = {});
 
+/** Quantized matmul multiplies x with a quantized matrix w*/
+array quantized_matmul(
+    const array& x,
+    const array& w,
+    const array& scales,
+    const array& biases,
+    bool transpose = true,
+    int group_size = 64,
+    int bits = 4,
+    StreamOrDevice s = {});
+
+/** Quantize a matrix along its last axis */
+std::tuple<array, array, array> quantize(
+    const array& w,
+    int group_size = 64,
+    int bits = 4,
+    StreamOrDevice s = {});
+
+/** Dequantize a matrix produced by quantize() */
+array dequantize(
+    const array& w,
+    const array& scales,
+    const array& biases,
+    int group_size = 64,
+    int bits = 4,
+    StreamOrDevice s = {});
+
+/** TensorDot returns a contraction of a and b over multiple dimensions. */
+array tensordot(
+    const array& a,
+    const array& b,
+    const int dims = 2,
+    StreamOrDevice s = {});
+
+array tensordot(
+    const array& a,
+    const array& b,
+    const std::pair<std::vector<int>, std::vector<int>>& dims,
+    StreamOrDevice s = {});
+
+/** Load array map from .safetensors file format */
+std::unordered_map<std::string, array> load_safetensors(
+    std::shared_ptr<io::Reader> in_stream,
+    StreamOrDevice s = {});
+std::unordered_map<std::string, array> load_safetensors(
+    const std::string& file,
+    StreamOrDevice s = {});
+
+void save_safetensors(
+    std::shared_ptr<io::Writer> in_stream,
+    std::unordered_map<std::string, array>,
+    std::optional<bool> retain_graph = std::nullopt);
+void save_safetensors(
+    const std::string& file,
+    std::unordered_map<std::string, array>,
+    std::optional<bool> retain_graph = std::nullopt);
 } // namespace mlx::core
