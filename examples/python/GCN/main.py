@@ -44,6 +44,7 @@ def to_mlx(x, y, adj, train_mask, val_mask, test_mask):
     test_mask = mx.array(test_mask.tolist())
     return x, y, adj, train_mask, val_mask, test_mask
 
+
 def get_masks(train_mask, val_mask, test_mask):
     train_mask = mx.array([i for i, e in enumerate(train_mask) if e == True])
     val_mask = mx.array([i for i, e in enumerate(val_mask) if e == True])
@@ -53,16 +54,18 @@ def get_masks(train_mask, val_mask, test_mask):
 
 
 def main(args):
-
     # Data loading
-    dataset = Planetoid(root='tmp/Cora', name='Cora')
+    dataset = Planetoid(root="tmp/Cora", name="Cora")
     data = dataset[0]
 
     x, y, adj = data.x, data.y, data.edge_index
-    train_mask, val_mask, test_mask = get_masks(data.train_mask, data.val_mask, data.test_mask)
-    
-    x, y, adj, train_mask, val_mask, test_mask = \
-        to_mlx(x, y, adj, train_mask, val_mask, test_mask)
+    train_mask, val_mask, test_mask = get_masks(
+        data.train_mask, data.val_mask, data.test_mask
+    )
+
+    x, y, adj, train_mask, val_mask, test_mask = to_mlx(
+        x, y, adj, train_mask, val_mask, test_mask
+    )
 
     gcn = GCN(
         x_dim=x.shape[-1],
@@ -130,7 +133,6 @@ def main(args):
 
 
 if __name__ == "__main__":
-
     parser = ArgumentParser()
     parser.add_argument("--nodes_path", type=str, default="cora/cora.content")
     parser.add_argument("--edges_path", type=str, default="cora/cora.cites")
