@@ -9,7 +9,7 @@ class MessagePassing(nn.Module):
         self.aggr = aggr
 
     def __call__(self, x, edge_index, **kwargs):
-        pass
+        raise NotImplementedError
 
     def propagate(self, x, edge_index, **kwargs):
         # process arguments and create *_kwargs
@@ -25,7 +25,7 @@ class MessagePassing(nn.Module):
         aggregated = self.aggregate(messages, dst_idx)  # **agg_kwargs)
 
         # Update
-        output = self.update(aggregated)  # **upd_kwargs)
+        output = self.update_(aggregated)  # **upd_kwargs)
 
         return output
 
@@ -41,7 +41,7 @@ class MessagePassing(nn.Module):
                 empty_tensor, indices, messages.reshape(update_dim), 0
             )
 
-    def update(self, aggregated, **kwargs):
+    def update_(self, aggregated, **kwargs):
         return aggregated
 
 
