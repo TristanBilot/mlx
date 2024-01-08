@@ -2,6 +2,12 @@ import mlx.core as mx
 import mlx.nn as nn
 
 
+def degree(index, num_edges):
+    out = mx.zeros((num_edges,))
+    one = mx.ones((index.shape[0],), dtype=out.dtype)
+    return mx.scatter_add(out, index, one.reshape(-1, 1), 0)
+
+
 class MessagePassing(nn.Module):
     def __init__(self, aggr=None):
         super().__init__()
@@ -18,8 +24,14 @@ class MessagePassing(nn.Module):
         x_i = x[src_idx]
         x_j = x[dst_idx]
 
+        row, col = edge_index
+        deg = degree(col, x.shape[0])
+        deg_inv_sqrt = deg ** (-0.5)
+        # deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        norm = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+
         # Message
-        messages = self.message(x_i, x_j)  # **msg_kwargs)
+        messages = self.message(x_i, x_j, norm)  # **msg_kwargs)
 
         # Aggregate
         aggregated = self.aggregate(messages, dst_idx)  # **agg_kwargs)
@@ -29,8 +41,8 @@ class MessagePassing(nn.Module):
 
         return output
 
-    def message(self, x_i, x_j, **kwargs):
-        return x_i
+    def message(self, x_i, x_j, norm, **kwargs):
+        return norm.reshape(-1, 1) * x_j
 
     def aggregate(self, messages, indices, **kwargs):
         if self.aggr == "add":
