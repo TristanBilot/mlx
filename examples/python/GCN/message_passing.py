@@ -42,7 +42,7 @@ class MessagePassing(nn.Module):
         return output
 
     def message(self, x_i, x_j, norm, **kwargs):
-        return norm.reshape(-1, 1) * x_j
+        return norm.reshape(-1, 1) * x_i
 
     def aggregate(self, messages, indices, **kwargs):
         if self.aggr == "add":
